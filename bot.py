@@ -7,28 +7,34 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# Store user file data
+user_files = {}
+
+# ---------------- COMMANDS ---------------- #
+
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, 
+    bot.reply_to(message,
 """👋 Hello, Welcome to Subtitle Bot!
 
 🎬 What I can do:
 • Convert SRT/VTT → ASS
 • Apply clean Donghua styling
-• Ready for encoding & Telegram uploads
+• Cinematic & Full 4K styles
 
 📌 How to use:
-Just send a .srt or .vtt file
+Send a .srt or .vtt file
 
 ⚡ Powered by The Friction Realm
 """)
+
 @bot.message_handler(commands=['help'])
 def help_cmd(message):
     bot.reply_to(message,
 """🛠 Help Guide
 
 1. Send subtitle file (.srt or .vtt)
-2. Wait a few seconds
+2. Choose style
 3. Get styled .ass file
 
 ❗ Supported:
@@ -38,8 +44,6 @@ def help_cmd(message):
 ❌ Not supported:
 • TXT
 • ASS input
-
-If something fails, resend file.
 """)
 
 @bot.message_handler(commands=['about'])
@@ -51,111 +55,124 @@ This bot converts subtitles into styled ASS format
 optimized for Donghua / Anime releases.
 
 ✨ Features:
-• Clean styling
-• Proper scaling
-• Ready for mux/encode
+• Cinematic scaling (1920x818)
+• True 4K styling
+• Clean output
 
-👨‍💻 Created for personal workflow automation
+👨‍💻 Built for automation workflow
 """)
 
-# Store file IDs temporarily
-user_files = {}
+# ---------------- FILE HANDLER ---------------- #
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     file_name = message.document.file_name
 
     if not file_name.endswith((".srt", ".vtt")):
-        bot.reply_to(message, "Send only .srt or .vtt files")
+        bot.reply_to(message, "❌ Send only .srt or .vtt files")
         return
 
-    # Save file_id
-    user_files[message.chat.id] = message.document.file_id
+    # Store file data
+    user_files[message.chat.id] = {
+        "file_id": message.document.file_id,
+        "name": file_name
+    }
 
-    # Create buttons
+    # Buttons
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("Cinematic", callback_data="cinema"),
-        InlineKeyboardButton("Regular", callback_data="full")
+        InlineKeyboardButton("🎬 Cinematic", callback_data="cinema"),
+        InlineKeyboardButton("📺 Full 4K", callback_data="full")
     )
 
-    bot.send_message(message.chat.id, "Choose Subtitle Type For The Donghua:", reply_markup=markup)
+    bot.send_message(message.chat.id,
+                     "Choose subtitle style:",
+                     reply_markup=markup)
 
+# ---------------- CALLBACK HANDLER ---------------- #
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    file_id = user_files.get(call.message.chat.id)
+    file_data = user_files.get(call.message.chat.id)
 
-    if not file_id:
-        bot.answer_callback_query(call.id, "No file found")
+    if not file_data:
+        bot.answer_callback_query(call.id, "❌ No file found")
         return
 
-    file_info = bot.get_file(file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
+    bot.send_message(call.message.chat.id, "⏳ Processing...")
 
-    input_file = "input.srt"
-    with open(input_file, 'wb') as f:
-        f.write(downloaded_file)
+    file_id = file_data["file_id"]
+    file_name = file_data["name"]
 
-    subs = pysubs2.load(input_file)
+    try:
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
 
-    # CINEMATIC STYLE
-    if call.data == "cinema":
-        subs.info["PlayResX"] = 1920
-        subs.info["PlayResY"] = 818
+        ext = os.path.splitext(file_name)[-1]
+        input_file = "input" + ext
 
-        style = pysubs2.SSAStyle()
-        style.fontname = "Arial"
-        style.fontsize = 60
+        with open(input_file, 'wb') as f:
+            f.write(downloaded_file)
+
+        subs = pysubs2.load(input_file)
+
+        # -------- STYLE SELECTION -------- #
+
+        if call.data == "cinema":
+            subs.info["PlayResX"] = 1920
+            subs.info["PlayResY"] = 818
+
+            style = pysubs2.SSAStyle()
+            style.fontname = "Arial"
+            style.fontsize = 60
+            style.outline = 2
+            style.shadow = 2
+            style.marginv = 100
+
+        else:
+            subs.info["PlayResX"] = 3840
+            subs.info["PlayResY"] = 1636
+
+            style = pysubs2.SSAStyle()
+            style.fontname = "Arial"
+            style.fontsize = 120
+            style.outline = 4
+            style.shadow = 4
+            style.marginv = 200
+
+        # -------- COMMON STYLE -------- #
+
         style.primarycolor = Color(255, 255, 255)
         style.outlinecolor = Color(0, 0, 0)
         style.backcolor = Color(0, 0, 0, 0)
-
-        style.outline = 2
-        style.shadow = 2
         style.alignment = 2
-        style.marginv = 100
         style.spacing = 1
         style.scalex = 70
         style.scaley = 90
 
-    # 🎯 FULL SIZE STYLE
-    else:
-        subs.info["PlayResX"] = 3840
-        subs.info["PlayResY"] = 1636
+        subs.info["ScaledBorderAndShadow"] = "yes"
+        subs.styles["Default"] = style
 
-        style = pysubs2.SSAStyle()
-        style.fontname = "Arial"
-        style.fontsize = 120
-        style.primarycolor = Color(255, 255, 255)
-        style.outlinecolor = Color(0, 0, 0)
-        style.backcolor = Color(0, 0, 0, 0)
+        # -------- OUTPUT NAME -------- #
 
-        style.outline = 4
-        style.shadow = 4
-        style.alignment = 2
-        style.marginv = 200
-        style.spacing = 1
-        style.scalex = 70
-        style.scaley = 90
+        name = os.path.splitext(file_name)[0]
+        output_file = f"{name}_styled.ass"
 
-    # Apply global settings
-    subs.info["ScaledBorderAndShadow"] = "yes"
-    subs.styles["Default"] = style
+        subs.save(output_file)
 
-    # Save output
-    output_file = "file_name.ass"
-    subs.save(output_file)
+        with open(output_file, "rb") as f:
+            bot.send_document(call.message.chat.id, f)
 
-    # Send back to user
-    with open(output_file, "rb") as f:
-        bot.send_document(call.message.chat.id, f)
+        # Cleanup
+        os.remove(input_file)
+        os.remove(output_file)
 
-    # Cleanup
-    os.remove(input_file)
-    os.remove(output_file)
+        bot.answer_callback_query(call.id, "✅ Done!")
 
-    bot.answer_callback_query(call.id, "Done!")
+    except Exception as e:
+        bot.send_message(call.message.chat.id, f"❌ Error: {e}")
+
+# ---------------- RUN BOT ---------------- #
 
 print("Bot running...")
 bot.infinity_polling()
