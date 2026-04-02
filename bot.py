@@ -108,3 +108,19 @@ def callback_handler(call):
 
 print("Bot running...")
 bot.infinity_polling()
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(message, 
+"""👋 Hello, Welcome to Subtitle Bot!
+
+🎬 What I can do:
+• Convert SRT/VTT → ASS
+• Apply clean Donghua styling
+• Ready for encoding & Telegram uploads
+
+📌 How to use:
+Just send a .srt or .vtt file
+
+⚡ Powered by The Friction Realm
+""")
