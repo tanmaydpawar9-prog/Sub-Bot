@@ -90,7 +90,58 @@ def handle_docs(message):
                      reply_markup=markup)
 
 # ---------------- CALLBACK HANDLER ---------------- #
+def validate_subs(subs):
+    errors = []
+    warnings = []
 
+    seen_lines = set()
+    prev_end = 0
+
+    for i, line in enumerate(subs):
+        text = line.text.strip()
+
+        # ❌ Empty line
+        if not text:
+            warnings.append(f"Line {i+1} is empty")
+
+        # ❌ Invalid timing
+        if line.start >= line.end:
+            errors.append(f"Line {i+1} has invalid timing")
+
+        # ❌ Overlap detection
+        if line.start < prev_end:
+            errors.append(f"Line {i+1} overlaps previous line")
+
+        # ❌ Duplicate detection (exact)
+        key = (text, line.start, line.end)
+        if key in seen_lines:
+            errors.append(f"Line {i+1} is duplicate")
+        else:
+            seen_lines.add(key)
+
+        # ❌ Repeated text block detection (like 140–150 same lines)
+        if i > 0 and text == subs[i-1].text.strip():
+            warnings.append(f"Line {i+1} repeated text")
+
+        # ❌ Too long line
+        if len(text) > 120:
+            warnings.append(f"Line {i+1} too long")
+
+        prev_end = line.end
+
+    # Detect repeated block patterns (strong duplicate case)
+    text_list = [line.text.strip() for line in subs]
+
+    for i in range(len(text_list) - 10):
+        block1 = text_list[i:i+10]
+        block2 = text_list[i+10:i+20]
+
+        if block1 == block2:
+            errors.append(f"Repeated block detected around line {i+1}")
+            break
+
+    return errors, warnings
+    
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     file_data = user_files.get(call.message.chat.id)
