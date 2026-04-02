@@ -124,3 +124,38 @@ Just send a .srt or .vtt file
 
 ⚡ Powered by The Friction Realm
 """)
+@bot.message_handler(commands=['help'])
+def help_cmd(message):
+    bot.reply_to(message,
+"""🛠 Help Guide
+
+1. Send subtitle file (.srt or .vtt)
+2. Wait a few seconds
+3. Get styled .ass file
+
+❗ Supported:
+• SRT
+• VTT
+
+❌ Not supported:
+• TXT
+• ASS input
+
+If something fails, resend file.
+""")
+
+@bot.message_handler(commands=['about'])
+def about(message):
+    bot.reply_to(message,
+"""📌 About This Bot
+
+This bot converts subtitles into styled ASS format
+optimized for Donghua / Anime releases.
+
+✨ Features:
+• Clean styling
+• Proper scaling
+• Ready for mux/encode
+
+👨‍💻 Created for personal workflow automation
+""")
