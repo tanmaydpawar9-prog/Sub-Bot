@@ -24,11 +24,11 @@ def handle_docs(message):
     # Create buttons
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("Cinematic (818)", callback_data="cinema"),
-        InlineKeyboardButton("Full 2160", callback_data="full")
+        InlineKeyboardButton("Cinematic", callback_data="cinema"),
+        InlineKeyboardButton("Regular", callback_data="full")
     )
 
-    bot.send_message(message.chat.id, "Choose subtitle type:", reply_markup=markup)
+    bot.send_message(message.chat.id, "Choose Subtitle Type For The Donghua:", reply_markup=markup)
 
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -48,7 +48,7 @@ def callback_handler(call):
 
     subs = pysubs2.load(input_file)
 
-    # 🎯 CINEMATIC STYLE (YOUR ORIGINAL LOOK)
+    # CINEMATIC STYLE
     if call.data == "cinema":
         subs.info["PlayResX"] = 1920
         subs.info["PlayResY"] = 818
@@ -68,10 +68,10 @@ def callback_handler(call):
         style.scalex = 70
         style.scaley = 90
 
-    # 🎯 FULL 4K STYLE
+    # 🎯 FULL SIZE STYLE
     else:
         subs.info["PlayResX"] = 3840
-        subs.info["PlayResY"] = 2160
+        subs.info["PlayResY"] = 1636
 
         style = pysubs2.SSAStyle()
         style.fontname = "Arial"
@@ -93,7 +93,7 @@ def callback_handler(call):
     subs.styles["Default"] = style
 
     # Save output
-    output_file = "styled.ass"
+    output_file = "file_name.ass"
     subs.save(output_file)
 
     # Send back to user
