@@ -20,7 +20,7 @@ def start(message):
 🎬 Features:
 • Style ASS (Cinematic / 4K)
 • Convert VTT → SRT
-• Error detection
+• Error detection (overlap + timing)
 
 📌 Send a subtitle file to begin
 """)
@@ -37,30 +37,41 @@ def handle_docs(message):
 
     user_files[message.chat.id] = {
         "file_id": message.document.file_id,
-        "name": file_name,
-        "size": message.document.file_size
-        }
+        "name": file_name
+    }
 
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("🎬 Style ASS", callback_data="style"),
-        InlineKeyboardButton("🔄 VTT → SRT", callback_data="convert")
+        InlineKeyboardButton("🎬 Style ASS", callback_data="style")
     )
+
+    # Only show convert if VTT
+    if file_name.endswith(".vtt"):
+        markup.add(
+            InlineKeyboardButton("🔄 Convert VTT → SRT", callback_data="convert")
+        )
 
     bot.send_message(message.chat.id, "Choose option:", reply_markup=markup)
 
 # ---------------- VALIDATION ---------------- #
+
+def format_time(ms):
+    seconds = ms // 1000
+    return f"{seconds//60:02}:{seconds%60:02}"
 
 def validate_subs(subs):
     errors = []
     prev_end = 0
 
     for i, line in enumerate(subs):
+        start = format_time(line.start)
+        end = format_time(line.end)
+
         if line.start >= line.end:
-            errors.append(f"Line {i+1} invalid timing")
+            errors.append(f"Line {i+1}: Invalid timing ({start} → {end})")
 
         if line.start < prev_end:
-            errors.append(f"Line {i+1} overlaps")
+            errors.append(f"Line {i+1}: Overlap at {start}")
 
         prev_end = line.end
 
@@ -73,15 +84,6 @@ def callback_handler(call):
 
     file_data = user_files.get(call.message.chat.id)
 
-    file_data = user_files.get(call.message.chat.id)
-
-    if not file_data:
-        bot.answer_callback_query(call.id, "Send file again")
-        return
-    
-    file_size = file_data["size"]
-    print("File size:", file_size)
-
     if not file_data:
         bot.answer_callback_query(call.id, "Send file again")
         return
@@ -89,7 +91,7 @@ def callback_handler(call):
     file_id = file_data["file_id"]
     file_name = file_data["name"]
 
-    # ---------- STEP 1: STYLE MENU ---------- #
+    # -------- STYLE MENU -------- #
     if call.data == "style":
         markup = InlineKeyboardMarkup()
         markup.add(
@@ -105,9 +107,7 @@ def callback_handler(call):
         )
         return
 
-    # ---------- PROCESSING START ---------- #
-
-    # Remove buttons AFTER final click
+    # Remove buttons after final click
     try:
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
     except:
@@ -120,12 +120,14 @@ def callback_handler(call):
         downloaded_file = bot.download_file(file_info.file_path)
 
         ext = os.path.splitext(file_name)[-1]
-        input_file = f"{file_name}_{time.time()}{ext}"
+        name_only = os.path.splitext(file_name)[0]
+
+        input_file = f"{name_only}_{int(time.time())}{ext}"
 
         with open(input_file, 'wb') as f:
             f.write(downloaded_file)
 
-        # Safe load
+        # Load safely
         try:
             subs = pysubs2.load(input_file, encoding="utf-8", errors="ignore")
         except Exception as e:
@@ -133,7 +135,7 @@ def callback_handler(call):
             os.remove(input_file)
             return
 
-        # Validate
+        # -------- VALIDATION -------- #
         errors = validate_subs(subs)
 
         if errors:
@@ -143,14 +145,12 @@ def callback_handler(call):
             user_files.pop(call.message.chat.id, None)
             return
 
-        name = os.path.splitext(file_name)[0]
-
-        # ---------- CONVERT ---------- #
+        # -------- CONVERT -------- #
         if call.data == "convert":
-            output_file = f"{name}.srt"
+            output_file = f"{name_only}.srt"
             subs.save(output_file)
 
-        # ---------- STYLE ---------- #
+        # -------- STYLE -------- #
         elif call.data in ["cinema", "full"]:
 
             subs.info["ScaledBorderAndShadow"] = "yes"
@@ -187,10 +187,10 @@ def callback_handler(call):
 
             subs.styles["Default"] = style
 
-            output_file = f"{name}.ass"
+            output_file = f"{name_only}.ass"
             subs.save(output_file)
 
-        # ---------- SEND ---------- #
+        # -------- SEND -------- #
         with open(output_file, "rb") as f:
             bot.send_document(call.message.chat.id, f)
 
@@ -203,6 +203,8 @@ def callback_handler(call):
 
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Error:\n{e}")
+        if os.path.exists(input_file):
+            os.remove(input_file)
 
 # ---------------- RUN ---------------- #
 
