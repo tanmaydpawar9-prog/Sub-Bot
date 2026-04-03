@@ -110,7 +110,7 @@ def callback_handler(call):
         downloaded_file = bot.download_file(file_info.file_path)
 
         ext = os.path.splitext(file_name)[-1]
-        input_file = f"input_{int(time.time())}{ext}"
+        input_file = f"{file_name}_{time.time()}{ext}"
 
         with open(input_file, 'wb') as f:
             f.write(downloaded_file)
