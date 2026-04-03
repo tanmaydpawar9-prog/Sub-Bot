@@ -10,7 +10,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 user_files = {}
 
-# ---------------- COMMANDS ---------------- #
+# ---------------- COMMAND ---------------- #
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -48,7 +48,7 @@ def handle_docs(message):
 
     bot.send_message(message.chat.id, "Choose option:", reply_markup=markup)
 
-# ---------------- VALIDATOR ---------------- #
+# ---------------- VALIDATION ---------------- #
 
 def validate_subs(subs):
     errors = []
@@ -70,24 +70,42 @@ def validate_subs(subs):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
 
-    # Remove buttons
-    try:
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    except:
-        pass
-
     file_data = user_files.get(call.message.chat.id)
 
     if not file_data:
         bot.answer_callback_query(call.id, "Send file again")
         return
 
+    file_id = file_data["file_id"]
+    file_name = file_data["name"]
+
+    # ---------- STEP 1: STYLE MENU ---------- #
+    if call.data == "style":
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("🎬 Cinematic", callback_data="cinema"),
+            InlineKeyboardButton("📺 Full 4K", callback_data="full")
+        )
+
+        bot.edit_message_text(
+            "Choose style:",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markup
+        )
+        return
+
+    # ---------- PROCESSING START ---------- #
+
+    # Remove buttons AFTER final click
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    except:
+        pass
+
     bot.send_message(call.message.chat.id, "⏳ Processing...")
 
     try:
-        file_id = file_data["file_id"]
-        file_name = file_data["name"]
-
         file_info = bot.get_file(file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
@@ -97,7 +115,7 @@ def callback_handler(call):
         with open(input_file, 'wb') as f:
             f.write(downloaded_file)
 
-        # -------- LOAD SAFELY -------- #
+        # Safe load
         try:
             subs = pysubs2.load(input_file, encoding="utf-8", errors="ignore")
         except Exception as e:
@@ -105,7 +123,7 @@ def callback_handler(call):
             os.remove(input_file)
             return
 
-        # -------- VALIDATE -------- #
+        # Validate
         errors = validate_subs(subs)
 
         if errors:
@@ -117,29 +135,42 @@ def callback_handler(call):
 
         name = os.path.splitext(file_name)[0]
 
-        # -------- CONVERT -------- #
+        # ---------- CONVERT ---------- #
         if call.data == "convert":
             output_file = f"{name}.srt"
             subs.save(output_file)
 
-        # -------- STYLE -------- #
-        else:
+        # ---------- STYLE ---------- #
+        elif call.data in ["cinema", "full"]:
+
             subs.info["ScaledBorderAndShadow"] = "yes"
 
-            subs.info["PlayResX"] = 1920
-            subs.info["PlayResY"] = 818
+            if call.data == "cinema":
+                subs.info["PlayResX"] = 1920
+                subs.info["PlayResY"] = 818
 
-            style = pysubs2.SSAStyle()
-            style.fontname = "Arial"
-            style.fontsize = 60
+                style = pysubs2.SSAStyle()
+                style.fontname = "Arial"
+                style.fontsize = 60
+                style.outline = 2
+                style.shadow = 2
+                style.marginv = 100
+
+            else:
+                subs.info["PlayResX"] = 3840
+                subs.info["PlayResY"] = 1636
+
+                style = pysubs2.SSAStyle()
+                style.fontname = "Arial"
+                style.fontsize = 120
+                style.outline = 4
+                style.shadow = 4
+                style.marginv = 200
+
             style.primarycolor = Color(255, 255, 255)
             style.outlinecolor = Color(0, 0, 0)
             style.backcolor = Color(0, 0, 0, 0)
-
-            style.outline = 2
-            style.shadow = 2
             style.alignment = 2
-            style.marginv = 100
             style.spacing = 1
             style.scalex = 70
             style.scaley = 90
@@ -149,11 +180,11 @@ def callback_handler(call):
             output_file = f"{name}.ass"
             subs.save(output_file)
 
-        # -------- SEND -------- #
+        # ---------- SEND ---------- #
         with open(output_file, "rb") as f:
             bot.send_document(call.message.chat.id, f)
 
-        # -------- CLEANUP -------- #
+        # Cleanup
         os.remove(input_file)
         os.remove(output_file)
         user_files.pop(call.message.chat.id, None)
