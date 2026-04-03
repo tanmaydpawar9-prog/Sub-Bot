@@ -51,7 +51,7 @@ def handle_docs(message):
             InlineKeyboardButton("🔄 Convert VTT → SRT", callback_data="convert")
         )
 
-    bot.send_message(message.chat.id, "Choose option:", reply_markup=markup)
+    bot.send_message(message.chat.id, "Choose The Option:", reply_markup=markup)
 
 # ---------------- VALIDATION ---------------- #
 
@@ -100,7 +100,7 @@ def callback_handler(call):
         )
 
         bot.edit_message_text(
-            "Choose style:",
+            "Choose The Style For The Subtitles:",
             call.message.chat.id,
             call.message.message_id,
             reply_markup=markup
