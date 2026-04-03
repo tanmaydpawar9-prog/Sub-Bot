@@ -40,7 +40,6 @@ def handle_docs(message):
         "name": file_name,
         "size": message.document.file_size
         }
-    }
 
     markup = InlineKeyboardMarkup()
     markup.add(
