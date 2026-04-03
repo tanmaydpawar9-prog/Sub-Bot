@@ -37,7 +37,9 @@ def handle_docs(message):
 
     user_files[message.chat.id] = {
         "file_id": message.document.file_id,
-        "name": file_name
+        "name": file_name,
+        "size": message.document.file_size
+        }
     }
 
     markup = InlineKeyboardMarkup()
@@ -71,6 +73,15 @@ def validate_subs(subs):
 def callback_handler(call):
 
     file_data = user_files.get(call.message.chat.id)
+
+    file_data = user_files.get(call.message.chat.id)
+
+    if not file_data:
+        bot.answer_callback_query(call.id, "Send file again")
+        return
+    
+    file_size = file_data["size"]
+    print("File size:", file_size)
 
     if not file_data:
         bot.answer_callback_query(call.id, "Send file again")
