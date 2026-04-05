@@ -160,7 +160,12 @@ def handle_link(message):
     msg = bot.reply_to(message, "🔍 Checking link...")
 
     try:
-        r = requests.get(url, stream=True, timeout=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "*/*"
+        }
+        
+        r = requests.get(url, stream=True, timeout=10, headers=headers)
 
         if r.status_code != 200:
             bot.edit_message_text("❌ Invalid link", message.chat.id, msg.message_id)
@@ -170,28 +175,67 @@ def handle_link(message):
             bot.edit_message_text("❌ Not a direct file link", message.chat.id, msg.message_id)
             return
 
-        total = int(r.headers.get("content-length", 0))
+        total = int(r.headers.get('content-length', 0))
+
+        size_mb = total / 1024 / 1024
+        
+        bot.edit_message_text(
+            f"📦 File Size: {size_mb:.2f} MB\n⬇️ Starting download...",
+            message.chat.id,
+            msg.message_id
+        )
+        
+        downloaded = 0
+        start = time.time()
         file_name = url.split("/")[-1] or "file.bin"
 
         downloaded = 0
         start = time.time()
         last = 0
+        
+        stall_time = 0
+        last_downloaded = 0
 
         bot.edit_message_text("⬇️ Downloading...", message.chat.id, msg.message_id)
 
         with open(file_name, "wb") as f:
-            for chunk in r.iter_content(1024 * 1024):
+            for chunk in r.iter_content(5 * 1024 * 1024):
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
 
+                    # Stall detection
+                    if downloaded == last_downloaded:
+                        stall_time += 1
+                    else:
+                        stall_time = 0
+                    
+                    last_downloaded = downloaded
+                    
+                    if stall_time > 20:
+                        bot.edit_message_text(
+                            "❌ Download too slow or stalled",
+                            message.chat.id,
+                            msg.message_id
+                        )
+                        return
+
                     now = time.time()
-                    if now - last > 2:
+                    if now - last > 2 or percent < 1:
                         speed = downloaded / (now - start)
                         percent = downloaded / total * 100 if total else 0
                         eta = (total - downloaded) / speed if speed > 0 else 0
 
-                        text = f"⬇️ {percent:.1f}%\n⚡ {speed/1024/1024:.2f} MB/s\n⏱ {eta:.1f}s"
+                        downloaded_mb = downloaded / 1024 / 1024
+                        total_mb = total / 1024 / 1024 if total else 0
+
+                        text = (
+                                f"⬇️ Downloading...\n\n"
+                                f"{downloaded_mb:.2f} / {total_mb:.2f} MB\n"
+                                f"📊 {percent:.2f}%\n"
+                                f"⚡ {speed/1024/1024:.2f} MB/s\n"
+                                f"⏱ {eta:.1f}s"
+                            )
                         bot.edit_message_text(text, message.chat.id, msg.message_id)
                         last = now
 
@@ -215,7 +259,7 @@ async def upload(file_name, message, msg):
     async def progress(current, total):
         nonlocal last
         now = time.time()
-        if now - last > 2:
+        if now - last > 2 or percent < 1:
             speed = current / (now - start)
             percent = current / total * 100
             eta = (total - current) / speed if speed > 0 else 0
