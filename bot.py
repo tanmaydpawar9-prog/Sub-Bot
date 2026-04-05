@@ -17,13 +17,13 @@ app = Client("my_session", api_id=API_ID, api_hash=API_HASH)
 
 user_files = {}
 
-# ================= COMMAND ================= #
+# ================= START ================= #
 
 @bot.message_handler(commands=['start'])
 def start(msg):
     bot.reply_to(msg, "👋 Send subtitle file or direct link")
 
-# ================= FILE HANDLER ================= #
+# ================= FILE ================= #
 
 @bot.message_handler(content_types=['document'])
 def handle_file(message):
@@ -46,7 +46,7 @@ def handle_file(message):
 
     bot.send_message(message.chat.id, "Choose option:", reply_markup=markup)
 
-# ================= VALIDATION ================= #
+# ================= ERROR CHECK ================= #
 
 def check_errors(subs):
     errors = []
@@ -61,14 +61,12 @@ def check_errors(subs):
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
-
     data = user_files.get(call.message.chat.id)
 
     if not data:
         bot.answer_callback_query(call.id, "Send file again")
         return
 
-    # STEP 2 MENU
     if call.data == "style":
         markup = InlineKeyboardMarkup()
         markup.add(
@@ -117,7 +115,6 @@ def callback(call):
             os.remove(out)
             return
 
-        # STYLE
         if call.data == "cinema":
             subs.info["PlayResX"] = 1920
             subs.info["PlayResY"] = 818
@@ -141,7 +138,6 @@ def callback(call):
         subs.save(output_file)
 
         bot.send_document(call.message.chat.id, open(output_file, "rb"))
-
         os.remove(output_file)
 
     except Exception as e:
@@ -151,20 +147,15 @@ def callback(call):
         os.remove(input_file)
         user_files.pop(call.message.chat.id, None)
 
-# ================= LINK HANDLER ================= #
+# ================= LINK ================= #
 
 @bot.message_handler(func=lambda m: m.text and m.text.startswith("http"))
 def handle_link(message):
     url = message.text.strip()
-
     msg = bot.reply_to(message, "🔍 Checking link...")
 
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "*/*"
-        }
-        
+        headers = {"User-Agent": "Mozilla/5.0", "Accept": "*/*"}
         r = requests.get(url, stream=True, timeout=10, headers=headers)
 
         if r.status_code != 200:
@@ -176,27 +167,23 @@ def handle_link(message):
             return
 
         total = int(r.headers.get('content-length', 0))
-
         size_mb = total / 1024 / 1024
-        
+
         bot.edit_message_text(
             f"📦 File Size: {size_mb:.2f} MB\n⬇️ Starting download...",
             message.chat.id,
             msg.message_id
         )
-        
-        downloaded = 0
-        start = time.time()
-        file_name = url.split("/")[-1] or "file.bin"
+
+        file_name = url.split("/")[-1]
+        if not file_name or "." not in file_name:
+            file_name = f"file_{int(time.time())}.bin"
 
         downloaded = 0
         start = time.time()
         last = 0
-        
         stall_time = 0
         last_downloaded = 0
-
-        bot.edit_message_text("⬇️ Downloading...", message.chat.id, msg.message_id)
 
         with open(file_name, "wb") as f:
             for chunk in r.iter_content(5 * 1024 * 1024):
@@ -204,43 +191,37 @@ def handle_link(message):
                     f.write(chunk)
                     downloaded += len(chunk)
 
-                    # Stall detection
                     if downloaded == last_downloaded:
                         stall_time += 1
                     else:
                         stall_time = 0
-                    
+
                     last_downloaded = downloaded
-                    
+
                     if stall_time > 20:
-                        bot.edit_message_text(
-                            "❌ Download too slow or stalled",
-                            message.chat.id,
-                            msg.message_id
-                        )
+                        bot.edit_message_text("❌ Download stalled", message.chat.id, msg.message_id)
                         return
 
                     now = time.time()
+                    speed = downloaded / (now - start)
+                    percent = downloaded / total * 100 if total else 0
+                    eta = (total - downloaded) / speed if speed > 0 else 0
+
+                    downloaded_mb = downloaded / 1024 / 1024
+                    total_mb = total / 1024 / 1024 if total else 0
+
                     if now - last > 2 or percent < 1:
-                        speed = downloaded / (now - start)
-                        percent = downloaded / total * 100 if total else 0
-                        eta = (total - downloaded) / speed if speed > 0 else 0
-
-                        downloaded_mb = downloaded / 1024 / 1024
-                        total_mb = total / 1024 / 1024 if total else 0
-
                         text = (
-                                f"⬇️ Downloading...\n\n"
-                                f"{downloaded_mb:.2f} / {total_mb:.2f} MB\n"
-                                f"📊 {percent:.2f}%\n"
-                                f"⚡ {speed/1024/1024:.2f} MB/s\n"
-                                f"⏱ {eta:.1f}s"
-                            )
+                            f"⬇️ Downloading...\n\n"
+                            f"{downloaded_mb:.2f} / {total_mb:.2f} MB\n"
+                            f"📊 {percent:.2f}%\n"
+                            f"⚡ {speed/1024/1024:.2f} MB/s\n"
+                            f"⏱ {eta:.1f}s"
+                        )
                         bot.edit_message_text(text, message.chat.id, msg.message_id)
                         last = now
 
         bot.edit_message_text("📤 Uploading...", message.chat.id, msg.message_id)
-
         asyncio.run(upload(file_name, message, msg))
 
     except Exception as e:
@@ -259,12 +240,18 @@ async def upload(file_name, message, msg):
     async def progress(current, total):
         nonlocal last
         now = time.time()
-        if now - last > 2 or percent < 1:
-            speed = current / (now - start)
-            percent = current / total * 100
-            eta = (total - current) / speed if speed > 0 else 0
 
-            text = f"📤 {percent:.1f}%\n⚡ {speed/1024/1024:.2f} MB/s\n⏱ {eta:.1f}s"
+        speed = current / (now - start)
+        percent = current / total * 100
+        eta = (total - current) / speed if speed > 0 else 0
+
+        if now - last > 2 or percent < 1:
+            text = (
+                f"📤 Uploading...\n\n"
+                f"📊 {percent:.2f}%\n"
+                f"⚡ {speed/1024/1024:.2f} MB/s\n"
+                f"⏱ {eta:.1f}s"
+            )
             bot.edit_message_text(text, message.chat.id, msg.message_id)
             last = now
 
