@@ -3,6 +3,7 @@ import pysubs2
 import os
 import requests
 import asyncio
+import time
 from pyrogram import Client
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -12,19 +13,17 @@ API_HASH = os.getenv("API_HASH")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# Pyrogram client (user session)
 app = Client("my_session", api_id=API_ID, api_hash=API_HASH)
 
 user_files = {}
 
-# ===================== COMMANDS =====================
+# ================= COMMAND ================= #
 
 @bot.message_handler(commands=['start'])
 def start(msg):
-    bot.reply_to(msg, "👋 Send subtitle file or direct download link")
+    bot.reply_to(msg, "👋 Send subtitle file or direct link")
 
-# ===================== FILE HANDLER =====================
+# ================= FILE HANDLER ================= #
 
 @bot.message_handler(content_types=['document'])
 def handle_file(message):
@@ -36,68 +35,89 @@ def handle_file(message):
 
     user_files[message.chat.id] = {
         "file_id": message.document.file_id,
-        "name": name,
-        "size": message.document.file_size
+        "name": name
     }
 
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("🎬 Cinematic", callback_data="cinema"),
-        InlineKeyboardButton("📺 Full 4K", callback_data="full"),
-        InlineKeyboardButton("🔄 Convert VTT → SRT", callback_data="vtt_srt")
+        InlineKeyboardButton("🎬 Style", callback_data="style"),
+        InlineKeyboardButton("🔄 Convert", callback_data="convert")
     )
 
     bot.send_message(message.chat.id, "Choose option:", reply_markup=markup)
 
-# ===================== ERROR CHECK =====================
+# ================= VALIDATION ================= #
 
 def check_errors(subs):
     errors = []
-
     for i in range(len(subs)-1):
         if subs[i].end > subs[i+1].start:
             errors.append(f"Overlap at line {i+1}")
-
         if subs[i].text == subs[i+1].text:
             errors.append(f"Duplicate at line {i+1}")
-
     return errors
 
-# ===================== CALLBACK =====================
+# ================= CALLBACK ================= #
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
+
     data = user_files.get(call.message.chat.id)
 
     if not data:
-        bot.answer_callback_query(call.id, "No file found")
+        bot.answer_callback_query(call.id, "Send file again")
         return
+
+    # STEP 2 MENU
+    if call.data == "style":
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("🎬 Cinematic", callback_data="cinema"),
+            InlineKeyboardButton("📺 Full 4K", callback_data="full")
+        )
+        bot.edit_message_text("Choose style:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        return
+
+    if call.data == "convert":
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("VTT → SRT", callback_data="vtt_srt")
+        )
+        bot.edit_message_text("Choose conversion:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        return
+
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    except:
+        pass
+
+    bot.send_message(call.message.chat.id, "⏳ Processing...")
 
     file_info = bot.get_file(data["file_id"])
     file = bot.download_file(file_info.file_path)
 
-    input_name = data["name"]
-    output_name = os.path.splitext(input_name)[0] + ".ass"
+    name = data["name"]
+    base = os.path.splitext(name)[0]
+    input_file = f"{int(time.time())}_{name}"
 
-    with open(input_name, "wb") as f:
+    with open(input_file, "wb") as f:
         f.write(file)
 
     try:
-        subs = pysubs2.load(input_name)
+        subs = pysubs2.load(input_file)
 
-        # ERROR CHECK
         errors = check_errors(subs)
         if errors:
-            bot.send_message(call.message.chat.id, "⚠️ Errors:\n" + "\n".join(errors))
+            bot.send_message(call.message.chat.id, "⚠️ Errors:\n" + "\n".join(errors[:10]))
 
-        # VTT → SRT
         if call.data == "vtt_srt":
-            out = input_name.replace(".vtt", ".srt")
+            out = f"{base}.srt"
             subs.save(out)
             bot.send_document(call.message.chat.id, open(out, "rb"))
+            os.remove(out)
             return
 
-        # STYLING
+        # STYLE
         if call.data == "cinema":
             subs.info["PlayResX"] = 1920
             subs.info["PlayResY"] = 818
@@ -116,52 +136,100 @@ def callback(call):
         style.marginv = 100
 
         subs.styles["Default"] = style
-        subs.save(output_name)
 
-        bot.send_document(call.message.chat.id, open(output_name, "rb"))
+        output_file = f"{base}.ass"
+        subs.save(output_file)
+
+        bot.send_document(call.message.chat.id, open(output_file, "rb"))
+
+        os.remove(output_file)
 
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Error: {e}")
 
     finally:
-        if os.path.exists(input_name):
-            os.remove(input_name)
-        if os.path.exists(output_name):
-            os.remove(output_name)
+        os.remove(input_file)
+        user_files.pop(call.message.chat.id, None)
 
-    bot.answer_callback_query(call.id, "Done")
-
-# ===================== LINK HANDLER =====================
+# ================= LINK HANDLER ================= #
 
 @bot.message_handler(func=lambda m: m.text and m.text.startswith("http"))
 def handle_link(message):
     url = message.text.strip()
-    bot.reply_to(message, "⬇️ Downloading...")
 
-    file_name = "downloaded_file"
+    msg = bot.reply_to(message, "🔍 Checking link...")
 
     try:
-        r = requests.get(url, stream=True)
+        r = requests.get(url, stream=True, timeout=10)
+
+        if r.status_code != 200:
+            bot.edit_message_text("❌ Invalid link", message.chat.id, msg.message_id)
+            return
+
+        if "text/html" in r.headers.get("Content-Type", ""):
+            bot.edit_message_text("❌ Not a direct file link", message.chat.id, msg.message_id)
+            return
+
+        total = int(r.headers.get("content-length", 0))
+        file_name = url.split("/")[-1] or "file.bin"
+
+        downloaded = 0
+        start = time.time()
+        last = 0
+
+        bot.edit_message_text("⬇️ Downloading...", message.chat.id, msg.message_id)
+
         with open(file_name, "wb") as f:
             for chunk in r.iter_content(1024 * 1024):
-                f.write(chunk)
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
 
-        bot.reply_to(message, "📤 Uploading to channel...")
+                    now = time.time()
+                    if now - last > 2:
+                        speed = downloaded / (now - start)
+                        percent = downloaded / total * 100 if total else 0
+                        eta = (total - downloaded) / speed if speed > 0 else 0
 
-        asyncio.run(upload_to_channel(file_name))
+                        text = f"⬇️ {percent:.1f}%\n⚡ {speed/1024/1024:.2f} MB/s\n⏱ {eta:.1f}s"
+                        bot.edit_message_text(text, message.chat.id, msg.message_id)
+                        last = now
 
-        bot.reply_to(message, "✅ Uploaded!")
+        bot.edit_message_text("📤 Uploading...", message.chat.id, msg.message_id)
+
+        asyncio.run(upload(file_name, message, msg))
 
     except Exception as e:
-        bot.reply_to(message, f"❌ Failed: {e}")
+        bot.edit_message_text(f"❌ {e}", message.chat.id, msg.message_id)
 
-# ===================== PYROGRAM UPLOAD =====================
+    finally:
+        if os.path.exists(file_name):
+            os.remove(file_name)
 
-async def upload_to_channel(file_name):
+# ================= UPLOAD ================= #
+
+async def upload(file_name, message, msg):
+    start = time.time()
+    last = 0
+
+    async def progress(current, total):
+        nonlocal last
+        now = time.time()
+        if now - last > 2:
+            speed = current / (now - start)
+            percent = current / total * 100
+            eta = (total - current) / speed if speed > 0 else 0
+
+            text = f"📤 {percent:.1f}%\n⚡ {speed/1024/1024:.2f} MB/s\n⏱ {eta:.1f}s"
+            bot.edit_message_text(text, message.chat.id, msg.message_id)
+            last = now
+
     async with app:
-        await app.send_document(CHANNEL_ID, file_name)
+        await app.send_document(CHANNEL_ID, file_name, progress=progress)
 
-# ===================== RUN =====================
+    bot.edit_message_text("✅ Uploaded!", message.chat.id, msg.message_id)
+
+# ================= RUN ================= #
 
 print("Bot running...")
 bot.infinity_polling()
