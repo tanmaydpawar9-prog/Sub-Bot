@@ -1,212 +1,167 @@
 import telebot
 import pysubs2
 import os
-import time
-from pysubs2 import Color
+import requests
+import asyncio
+from pyrogram import Client
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# Pyrogram client (user session)
+app = Client("my_session", api_id=API_ID, api_hash=API_HASH)
 
 user_files = {}
 
-# ---------------- COMMAND ---------------- #
+# ===================== COMMANDS =====================
 
 @bot.message_handler(commands=['start'])
-def start(message):
-    bot.reply_to(message,
-"""👋 Welcome to Subtitle Bot!
+def start(msg):
+    bot.reply_to(msg, "👋 Send subtitle file or direct download link")
 
-🎬 Features:
-• Style ASS (Cinematic / 4K)
-• Convert VTT → SRT
-• Error detection (overlap + timing)
-
-📌 Send a subtitle file to begin
-""")
-
-# ---------------- FILE HANDLER ---------------- #
+# ===================== FILE HANDLER =====================
 
 @bot.message_handler(content_types=['document'])
-def handle_docs(message):
-    file_name = message.document.file_name
+def handle_file(message):
+    name = message.document.file_name
 
-    if not file_name.endswith((".srt", ".vtt")):
-        bot.reply_to(message, "❌ Send only .srt or .vtt files")
+    if not name.endswith((".srt", ".vtt")):
+        bot.reply_to(message, "❌ Only SRT/VTT supported")
         return
 
     user_files[message.chat.id] = {
         "file_id": message.document.file_id,
-        "name": file_name
+        "name": name,
+        "size": message.document.file_size
     }
 
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("🎬 Style ASS", callback_data="style")
+        InlineKeyboardButton("🎬 Cinematic", callback_data="cinema"),
+        InlineKeyboardButton("📺 Full 4K", callback_data="full"),
+        InlineKeyboardButton("🔄 Convert VTT → SRT", callback_data="vtt_srt")
     )
 
-    # Only show convert if VTT
-    if file_name.endswith(".vtt"):
-        markup.add(
-            InlineKeyboardButton("🔄 Convert VTT → SRT", callback_data="convert")
-        )
+    bot.send_message(message.chat.id, "Choose option:", reply_markup=markup)
 
-    bot.send_message(message.chat.id, "Choose The Option:", reply_markup=markup)
+# ===================== ERROR CHECK =====================
 
-# ---------------- VALIDATION ---------------- #
-
-def format_time(ms):
-    seconds = ms // 1000
-    return f"{seconds//60:02}:{seconds%60:02}"
-
-def validate_subs(subs):
+def check_errors(subs):
     errors = []
-    prev_end = 0
 
-    for i, line in enumerate(subs):
-        start = format_time(line.start)
-        end = format_time(line.end)
+    for i in range(len(subs)-1):
+        if subs[i].end > subs[i+1].start:
+            errors.append(f"Overlap at line {i+1}")
 
-        if line.start >= line.end:
-            errors.append(f"Line {i+1}: Invalid timing ({start} → {end})")
-
-        if line.start < prev_end:
-            errors.append(f"Line {i+1}: Overlap at {start}")
-
-        prev_end = line.end
+        if subs[i].text == subs[i+1].text:
+            errors.append(f"Duplicate at line {i+1}")
 
     return errors
 
-# ---------------- CALLBACK ---------------- #
+# ===================== CALLBACK =====================
 
 @bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
+def callback(call):
+    data = user_files.get(call.message.chat.id)
 
-    file_data = user_files.get(call.message.chat.id)
-
-    if not file_data:
-        bot.answer_callback_query(call.id, "Send file again")
+    if not data:
+        bot.answer_callback_query(call.id, "No file found")
         return
 
-    file_id = file_data["file_id"]
-    file_name = file_data["name"]
+    file_info = bot.get_file(data["file_id"])
+    file = bot.download_file(file_info.file_path)
 
-    # -------- STYLE MENU -------- #
-    if call.data == "style":
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("🎬 Cinematic", callback_data="cinema"),
-            InlineKeyboardButton("📺 Full 4K", callback_data="full")
-        )
+    input_name = data["name"]
+    output_name = os.path.splitext(input_name)[0] + ".ass"
 
-        bot.edit_message_text(
-            "Choose The Style For The Subtitles:",
-            call.message.chat.id,
-            call.message.message_id,
-            reply_markup=markup
-        )
-        return
-
-    # Remove buttons after final click
-    try:
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-    except:
-        pass
-
-    bot.send_message(call.message.chat.id, "⏳ Processing...")
+    with open(input_name, "wb") as f:
+        f.write(file)
 
     try:
-        file_info = bot.get_file(file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
+        subs = pysubs2.load(input_name)
 
-        ext = os.path.splitext(file_name)[-1]
-        name_only = os.path.splitext(file_name)[0]
-
-        input_file = f"{name_only}_{int(time.time())}{ext}"
-
-        with open(input_file, 'wb') as f:
-            f.write(downloaded_file)
-
-        # Load safely
-        try:
-            subs = pysubs2.load(input_file, encoding="utf-8", errors="ignore")
-        except Exception as e:
-            bot.send_message(call.message.chat.id, f"❌ Invalid file:\n{e}")
-            os.remove(input_file)
-            return
-
-        # -------- VALIDATION -------- #
-        errors = validate_subs(subs)
-
+        # ERROR CHECK
+        errors = check_errors(subs)
         if errors:
-            bot.send_message(call.message.chat.id,
-                             "❌ Errors found:\n\n" + "\n".join(errors[:10]))
-            os.remove(input_file)
-            user_files.pop(call.message.chat.id, None)
+            bot.send_message(call.message.chat.id, "⚠️ Errors:\n" + "\n".join(errors))
+
+        # VTT → SRT
+        if call.data == "vtt_srt":
+            out = input_name.replace(".vtt", ".srt")
+            subs.save(out)
+            bot.send_document(call.message.chat.id, open(out, "rb"))
             return
 
-        # -------- CONVERT -------- #
-        if call.data == "convert":
-            output_file = f"{name_only}.srt"
-            subs.save(output_file)
+        # STYLING
+        if call.data == "cinema":
+            subs.info["PlayResX"] = 1920
+            subs.info["PlayResY"] = 818
+            size = 60
+        else:
+            subs.info["PlayResX"] = 3840
+            subs.info["PlayResY"] = 1636
+            size = 120
 
-        # -------- STYLE -------- #
-        elif call.data in ["cinema", "full"]:
+        style = pysubs2.SSAStyle()
+        style.fontname = "Arial"
+        style.fontsize = size
+        style.outline = 2
+        style.shadow = 2
+        style.alignment = 2
+        style.marginv = 100
 
-            subs.info["ScaledBorderAndShadow"] = "yes"
+        subs.styles["Default"] = style
+        subs.save(output_name)
 
-            if call.data == "cinema":
-                subs.info["PlayResX"] = 1920
-                subs.info["PlayResY"] = 818
-
-                style = pysubs2.SSAStyle()
-                style.fontname = "Arial"
-                style.fontsize = 60
-                style.outline = 2
-                style.shadow = 2
-                style.marginv = 100
-
-            else:
-                subs.info["PlayResX"] = 3840
-                subs.info["PlayResY"] = 1636
-
-                style = pysubs2.SSAStyle()
-                style.fontname = "Arial"
-                style.fontsize = 120
-                style.outline = 4
-                style.shadow = 4
-                style.marginv = 200
-
-            style.primarycolor = Color(255, 255, 255)
-            style.outlinecolor = Color(0, 0, 0)
-            style.backcolor = Color(0, 0, 0, 0)
-            style.alignment = 2
-            style.spacing = 1
-            style.scalex = 70
-            style.scaley = 90
-
-            subs.styles["Default"] = style
-
-            output_file = f"{name_only}.ass"
-            subs.save(output_file)
-
-        # -------- SEND -------- #
-        with open(output_file, "rb") as f:
-            bot.send_document(call.message.chat.id, f)
-
-        # Cleanup
-        os.remove(input_file)
-        os.remove(output_file)
-        user_files.pop(call.message.chat.id, None)
-
-        bot.answer_callback_query(call.id, "✅ Done")
+        bot.send_document(call.message.chat.id, open(output_name, "rb"))
 
     except Exception as e:
-        bot.send_message(call.message.chat.id, f"❌ Error:\n{e}")
-        if os.path.exists(input_file):
-            os.remove(input_file)
+        bot.send_message(call.message.chat.id, f"❌ Error: {e}")
 
-# ---------------- RUN ---------------- #
+    finally:
+        if os.path.exists(input_name):
+            os.remove(input_name)
+        if os.path.exists(output_name):
+            os.remove(output_name)
+
+    bot.answer_callback_query(call.id, "Done")
+
+# ===================== LINK HANDLER =====================
+
+@bot.message_handler(func=lambda m: m.text and m.text.startswith("http"))
+def handle_link(message):
+    url = message.text.strip()
+    bot.reply_to(message, "⬇️ Downloading...")
+
+    file_name = "downloaded_file"
+
+    try:
+        r = requests.get(url, stream=True)
+        with open(file_name, "wb") as f:
+            for chunk in r.iter_content(1024 * 1024):
+                f.write(chunk)
+
+        bot.reply_to(message, "📤 Uploading to channel...")
+
+        asyncio.run(upload_to_channel(file_name))
+
+        bot.reply_to(message, "✅ Uploaded!")
+
+    except Exception as e:
+        bot.reply_to(message, f"❌ Failed: {e}")
+
+# ===================== PYROGRAM UPLOAD =====================
+
+async def upload_to_channel(file_name):
+    async with app:
+        await app.send_document(CHANNEL_ID, file_name)
+
+# ===================== RUN =====================
 
 print("Bot running...")
 bot.infinity_polling()
