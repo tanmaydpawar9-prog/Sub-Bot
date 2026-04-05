@@ -7,6 +7,11 @@ import time
 from pyrogram import Client
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+def format_time(seconds):
+    seconds = int(seconds)
+    m, s = divmod(seconds, 60)
+    return f"{m}m {s}s"
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
@@ -14,6 +19,7 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Client("my_session", api_id=API_ID, api_hash=API_HASH)
+app.start()
 
 user_files = {}
 
@@ -211,18 +217,22 @@ def handle_link(message):
                     total_mb = total / 1024 / 1024 if total else 0
 
                     if now - last > 2 or percent < 1:
+                        eta_text = format_time(eta)
                         text = (
                             f"⬇️ Downloading...\n\n"
                             f"{downloaded_mb:.2f} / {total_mb:.2f} MB\n"
                             f"📊 {percent:.2f}%\n"
                             f"⚡ {speed/1024/1024:.2f} MB/s\n"
-                            f"⏱ {eta:.1f}s"
+                            f"⏱ {eta_text}"
                         )
                         bot.edit_message_text(text, message.chat.id, msg.message_id)
                         last = now
 
         bot.edit_message_text("📤 Uploading...", message.chat.id, msg.message_id)
-        asyncio.run(upload(file_name, message, msg))
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(upload(file_name, message, msg))
 
     except Exception as e:
         bot.edit_message_text(f"❌ {e}", message.chat.id, msg.message_id)
@@ -234,31 +244,39 @@ def handle_link(message):
 # ================= UPLOAD ================= #
 
 async def upload(file_name, message, msg):
-    start = time.time()
-    last = 0
+    try:
+        start = time.time()
+        last = 0
 
-    async def progress(current, total):
-        nonlocal last
-        now = time.time()
+        async def progress(current, total):
+            nonlocal last
+            now = time.time()
 
-        speed = current / (now - start)
-        percent = current / total * 100
-        eta = (total - current) / speed if speed > 0 else 0
+            speed = current / (now - start)
+            percent = current / total * 100
+            eta = (total - current) / speed if speed > 0 else 0
 
-        if now - last > 2 or percent < 1:
-            text = (
-                f"📤 Uploading...\n\n"
-                f"📊 {percent:.2f}%\n"
-                f"⚡ {speed/1024/1024:.2f} MB/s\n"
-                f"⏱ {eta:.1f}s"
-            )
-            bot.edit_message_text(text, message.chat.id, msg.message_id)
-            last = now
+            if now - last > 2:
+                bot.edit_message_text(
+                    f"📤 Uploading...\n\n"
+                    f"📊 {percent:.2f}%\n"
+                    f"⚡ {speed/1024/1024:.2f} MB/s\n"
+                    f"⏱ {int(eta//60)}m {int(eta%60)}s",
+                    message.chat.id,
+                    msg.message_id
+                )
+                last = now
 
-    async with app:
-        await app.send_document(CHANNEL_ID, file_name, progress=progress)
+        await app.send_document(
+            CHANNEL_ID,
+            file_name,
+            progress=progress
+        )
 
-    bot.edit_message_text("✅ Uploaded!", message.chat.id, msg.message_id)
+        bot.edit_message_text("✅ Uploaded!", message.chat.id, msg.message_id)
+
+    except Exception as e:
+        bot.edit_message_text(f"❌ Upload error:\n{e}", message.chat.id, msg.message_id)
 
 # ================= RUN ================= #
 
