@@ -15,7 +15,7 @@ def format_time(seconds):
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Fix: cast to int here
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # unused, kept for compatibility
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Client("my_session", api_id=API_ID, api_hash=API_HASH)  # Fix: removed app.start()
