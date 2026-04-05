@@ -15,11 +15,10 @@ def format_time(seconds):
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Fix: cast to int here
 
 bot = telebot.TeleBot(BOT_TOKEN)
-app = Client("my_session", api_id=API_ID, api_hash=API_HASH)
-app.start()
+app = Client("my_session", api_id=API_ID, api_hash=API_HASH)  # Fix: removed app.start()
 
 user_files = {}
 
@@ -209,7 +208,7 @@ def handle_link(message):
                         return
 
                     now = time.time()
-                    speed = downloaded / (now - start)
+                    speed = downloaded / (now - start + 0.001)
                     percent = downloaded / total * 100 if total else 0
                     eta = (total - downloaded) / speed if speed > 0 else 0
 
@@ -229,7 +228,8 @@ def handle_link(message):
                         last = now
 
         bot.edit_message_text("📤 Uploading...", message.chat.id, msg.message_id)
-        
+
+        # Fix: use a fresh event loop and async with app
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(upload(file_name, message, msg))
@@ -252,7 +252,7 @@ async def upload(file_name, message, msg):
             nonlocal last
             now = time.time()
 
-            speed = current / (now - start)
+            speed = current / (now - start + 0.001)  # Fix: avoid division by zero
             percent = current / total * 100
             eta = (total - current) / speed if speed > 0 else 0
 
@@ -267,11 +267,12 @@ async def upload(file_name, message, msg):
                 )
                 last = now
 
-        await app.send_document(
-            CHANNEL_ID,
-            file_name,
-            progress=progress
-        )
+        async with app:  # Fix: properly starts and stops the Pyrogram client
+            await app.send_document(
+                message.chat.id,
+                file_name,
+                progress=progress
+            )
 
         bot.edit_message_text("✅ Uploaded!", message.chat.id, msg.message_id)
 
