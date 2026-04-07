@@ -72,6 +72,11 @@ def callback(call):
         bot.answer_callback_query(call.id, "Send file again")
         return
 
+    if call.data == "help":
+        def start(msg):
+            bot.reply_to(msg, "Contact Admin To Get Access : @The_Friction")
+    
+    
     if call.data == "style":
         markup = InlineKeyboardMarkup()
         markup.add(
